@@ -2,27 +2,13 @@
 
 **A lightweight C++ server designed to manage a conversational agent's memory, providing a simple API for adding and retrieving memory entries. It features in-memory storage with a fixed size, background persistence to disk, and basic API key authentication.**
 
-## Table of Contents
-
-* [Features](https://www.google.com/search?q=%23features "null")
-* [Prerequisites](https://www.google.com/search?q=%23prerequisites "null")
-* [Setup and Building](https://www.google.com/search?q=%23setup-and-building "null")
-* [Running the Server](https://www.google.com/search?q=%23running-the-server "null")
-* [API Endpoints](https://www.google.com/search?q=%23api-endpoints "null")
-  * [Authentication](https://www.google.com/search?q=%23authentication "null")
-  * [`<span class="selected">POST /memory/add</span>`](https://www.google.com/search?q=%23post-memoryadd "null")
-  * [`<span class="selected">GET /memory/retrieve</span>`](https://www.google.com/search?q=%23get-memoryretrieve "null")
-* [Memory Persistence](https://www.google.com/search?q=%23memory-persistence "null")
-* [Configuration](https://www.google.com/search?q=%23configuration "null")
-* [Contributing](https://www.google.com/search?q=%23contributing "null")
-* [License](https://www.google.com/search?q=%23license "null")
 
 ## Features
 
-* **Fixed-Size Memory Buffer:** Stores the `<span class="selected">N</span>` most recent memory entries in a `<span class="selected">std::deque</span>`.
-* **Disk Persistence:** Automatically flushes memory entries to `<span class="selected">memory_history.json</span>` in the background.
+* **Fixed-Size Memory Buffer:** Stores the `N` most recent memory entries in a `std::deque`.
+* **Disk Persistence:** Automatically flushes memory entries to `memory_history.json` in the background.
 * **Simple REST API:** Exposes endpoints for adding and retrieving memory.
-* **Basic Authentication:** Requires an `<span class="selected">X-Auth</span>` header for all API calls.
+* **Basic Authentication:** Requires an `X-Auth` header for all API calls.
 * **Timestamping:** Automatically adds UTC timestamps to each memory entry.
 * **Multithreaded:** Utilizes Crow's multithreading capabilities and a dedicated writer thread for persistence.
 
@@ -36,7 +22,7 @@
 
 ## API Endpoints
 
-**The server exposes two main API endpoints. All requests must include the **`<span class="selected">X-Auth</span>` header for authentication.
+**The server exposes two main API endpoints. All requests must include the **`X-Auth` header for authentication.
 
 ### Authentication
 
@@ -44,7 +30,7 @@
 
 **Note:** For a production environment, this token should be stored securely (e.g., environment variable) and a more robust authentication mechanism should be implemented.
 
-### `POST /memory/add</span>`
+### `POST /memory/add`
 
 **Adds a new memory entry to the system.**
 
