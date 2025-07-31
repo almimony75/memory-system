@@ -1,0 +1,13 @@
+# Compiled executables
+memory_server
+
+# Generated data files
+memory_data.json
+memory_index.faiss
+
+# Model files
+*.gguf
+
+
+# external bins
+llama-embedding
