@@ -39,8 +39,8 @@ To build and run the Jarvis Memory Server, you'll need the following:
 1. **Clone the Repository:**
     
     ```
-    git clone <your-repository-url>
-    cd <your-repository-name>
+    https://github.com/almimony75/memory-system.git
+    cd memory-system
     ```
     
 2. **Update Paths:** Open `main.cpp` and update the `LLAMA_BIN_PATH` and `MODEL_PATH` constants to reflect the actual paths on your system:
