@@ -39,7 +39,7 @@ To build and run the Jarvis Memory Server, you'll need the following:
 1. **Clone the Repository:**
     
     ```
-    https://github.com/almimony75/memory-system.git
+    git clone https://github.com/almimony75/memory-system.git
     cd memory-system
     ```
     
