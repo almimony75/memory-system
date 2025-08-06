@@ -1,35 +1,37 @@
 ## Jarvis Memory Server
 
-An offline, C++ based semantic memory server designed to provide a fast and efficient long-term memory solution for AI assistants like "Jarvis." This server leverages llama.cpp for text embedding generation and Faiss for high-performance similarity search, all running locally without requiring an internet connection.
+An offline, C++-based semantic memory server designed to provide a fast and efficient long-term memory solution for AI assistants like "Jarvis."  
+This server leverages **llama.cpp** for text embedding generation and **Faiss** for high-performance similarity search, all running locally without requiring an internet connection.
+
+## Recent Optimizations
+
+- **⚡ Async Disk Save:**  
+  Previously, each `/memory/add` request blocked while saving the entire FAISS index and JSON file to disk.  
+  Now, changes are batched and written in a background thread every 5 seconds (configurable), dramatically improving request speed.
+
+- **📚 Direct llama.cpp Integration:**  
+  Removed the use of `exec()` to call the `llama-embedding` binary. The server now links directly to llama.cpp and generates embeddings in-process, reducing process spawn overhead and speeding up embedding generation.
+
+These changes make the server **faster**, especially under heavy request loads.
 
 ## Features
 
 - **Offline Operation:** All core functionalities run locally on your machine, ensuring data privacy and low latency.
-    
 - **Semantic Search:** Utilizes state-of-the-art text embedding models (via `llama.cpp`) and Faiss to find memories based on their meaning, not just keywords.
-    
 - **Recent Memory Retrieval:** Quickly access the most recently added memories.
-    
 - **Persistent Storage:** Memories and their embeddings are saved to disk, ensuring data is retained across server restarts.
-    
 - **RESTful API:** Provides a simple HTTP interface for easy integration with other applications.
-    
 - **Authentication:** Basic token-based authentication for securing API access.
     
 ## Prerequisites
 
-To build and run the Jarvis Memory Server, you'll need the following:
+To build and run the Jarvis Memory Server, you'll need:
 
 - **C++ Compiler:** A C++17 compatible compiler, such as `g++`.
-    
 - **Faiss Library:** A library for efficient similarity search.
-    
 - **Crow Web Framework:** A C++ microframework for web development.
-    
 - **nlohmann/json:** A C++ JSON library.
-    
-- **llama.cpp:** The `embedding` binary from this project.
-    
+- **llama.cpp:** Now used as a linked library for embeddings.
 - **GGUF Embedding Model:** A compatible GGUF model, such as `nomic-embed-text-v1.5.f32.gguf`.
     
 
@@ -43,15 +45,14 @@ To build and run the Jarvis Memory Server, you'll need the following:
     cd memory-system
     ```
     
-2. **Update Paths:** Open `main.cpp` and update the `LLAMA_BIN_PATH` and `MODEL_PATH` constants to reflect the actual paths on your system:
+2. **Update Paths:** Open `main.cpp` and update the `MODEL_PATH` constant to reflect the actual path on your system:
     
     ```
     // main.cpp
-    const std::string LLAMA_BIN_PATH = "./llama-embedding"; // Example: if binary is in the same dir
     const std::string MODEL_PATH = "./nomic-embed-text-v1.5.f32.gguf"; // Example: if model is in the same dir
     ```
     
-3. **Compile the Server:** Use your `run.sh` script to compile the project. This script handles the necessary `g++` flags and library linking.
+3. **Compile the Server:** Use the `run.sh` script to compile the project. This script handles the necessary `g++` flags and library linking.
     
     ```
     ./run.sh
