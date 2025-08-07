@@ -1,1 +1,1 @@
-g++ src/main.cpp src/MemoryManager.cpp  src/llama.cpp -I ./include -o memory_server -std=c++17 -L./lib -L/usr/local/lib -lfaiss -lopenblas -lpthread -lstdc++fs -fopenmp -lllama -Wl,-rpath,$(pwd)/lib
+g++ src/main.cpp src/MemoryManager.cpp  src/llama.cpp -I ./include -o memory_server -std=c++17 -L./lib -L/usr/local/lib -lopenblas -lpthread -lstdc++fs -fopenmp -lllama -Wl,-rpath,$(pwd)/lib

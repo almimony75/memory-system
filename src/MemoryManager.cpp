@@ -1,4 +1,5 @@
 #include "MemoryManager.hpp"
+#include "hnswlib/hnswlib.h" // Added for hnswlib cosine similarity
 #include <sstream>
 #include <iostream>
 #include <cstdio>
@@ -9,17 +10,38 @@
 #include <chrono>
 #include <algorithm>
 #include <unordered_set>
+#include <cmath> // for sqrt
 
+// JSON serialization of MemoryEntry
 void to_json(json &j, const MemoryEntry &m)
 {
-  j = json{{"id", m.id}, {"timestamp", m.timestamp}, {"role", m.role}, {"content", m.content}};
+  j = json{
+      {"id", m.id},
+      {"timestamp", m.timestamp},
+      {"role", m.role},
+      {"content", m.content}};
 }
+
 void from_json(const json &j, MemoryEntry &m)
 {
   j.at("id").get_to(m.id);
   j.at("timestamp").get_to(m.timestamp);
   j.at("role").get_to(m.role);
   j.at("content").get_to(m.content);
+}
+
+// Utility: Normalize vector to unit length (required for cosine similarity)
+static void normalizeVector(std::vector<float> &vec)
+{
+  float norm = 0.0f;
+  for (float v : vec)
+    norm += v * v;
+  norm = std::sqrt(norm);
+  if (norm > 1e-6f)
+  {
+    for (auto &v : vec)
+      v /= norm;
+  }
 }
 
 std::string MemoryManager::currentTimestamp() const
@@ -41,14 +63,19 @@ MemoryManager::MemoryManager(const std::string &model_path, int dimension)
     : model_path_(model_path), dimension_(dimension)
 {
   embedding_generator_ = std::make_unique<LlamaEmbeddingGenerator>(model_path_, 512);
-  index_ = new faiss::IndexFlatL2(dimension_);
+
+  // HNSWlib initialization for cosine similarity
+  max_elements_ = 20000; // Adjust to your expected dataset size
+  space_ = new hnswlib::InnerProductSpace(dimension_);
+  index_ = new hnswlib::HierarchicalNSW<float>(space_, max_elements_, 32, 400); // M=16, efConstruction=400
+
   loadFromDisk();
 
-  // Background save thread
+  // Background save thread for persistence (unchanged)
   saver_thread_ = std::thread([this]()
                               {
         while (!stop_saving_) {
-            std::this_thread::sleep_for(std::chrono::seconds(5)); // save every 5s
+            std::this_thread::sleep_for(std::chrono::seconds(10));
             if (dirty_) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 saveToDisk();
@@ -67,16 +94,18 @@ MemoryManager::~MemoryManager()
   if (dirty_)
     saveToDisk();
 
+  // Clean up hnswlib objects
   delete index_;
+  delete space_;
 }
 
+// Add entry and embedding to memory and index
 void MemoryManager::add(const std::string &role, const std::string &content)
 {
   std::lock_guard<std::mutex> lock(mtx_);
 
   long current_id = next_id_++;
   MemoryEntry new_entry = {current_id, currentTimestamp(), role, content};
-
   memory_data_[current_id] = new_entry;
 
   short_term_ids_.push_back(current_id);
@@ -87,10 +116,13 @@ void MemoryManager::add(const std::string &role, const std::string &content)
 
   try
   {
-    std::vector<float> embedding = generateEmbedding(content);
+    // Use TaskType::Document when creating a memory's embedding
+    std::vector<float> embedding = generateEmbedding(content, TaskType::Document); // <-- CHANGE HERE
+
     if (!embedding.empty())
     {
-      index_->add(1, embedding.data());
+      normalizeVector(embedding); // Normalize embedding for cosine similarity
+      index_->addPoint(embedding.data(), current_id);
     }
   }
   catch (const std::runtime_error &e)
@@ -98,74 +130,86 @@ void MemoryManager::add(const std::string &role, const std::string &content)
     std::cerr << "Error generating embedding: " << e.what() << std::endl;
   }
 
-  // Mark data as needing save, but don't block here
   dirty_ = true;
 }
-std::vector<float> MemoryManager::generateEmbedding(const std::string &text) const
+
+std::vector<float> MemoryManager::generateEmbedding(const std::string &text, TaskType type) const
 {
-  // Add query prefix if not already present
-  const std::string prefix = "search_query: ";
-  std::string processed_text = text;
-  if (text.find(prefix) != 0)
+  std::string prefix;
+  if (type == TaskType::Query)
   {
-    processed_text = prefix + text;
+    prefix = "search_query: ";
   }
-  return embedding_generator_->generateEmbedding(processed_text);
+  else
+  {
+    prefix = "search_document: ";
+  }
+  std::string processedText = prefix + text;
+  return embedding_generator_->generateEmbedding(processedText);
 }
 
+// Retrieve relevant memories with cosine similarity using hnswlib
 std::vector<MemoryEntry> MemoryManager::getRelevantMemories(const std::string &query, int k)
 {
   std::lock_guard<std::mutex> lock(mtx_);
   std::vector<MemoryEntry> results;
 
-  if (index_->ntotal == 0 || query.empty())
+  if (index_->cur_element_count == 0 || query.empty())
   {
     return results;
   }
 
   try
   {
-    std::vector<float> query_embedding = generateEmbedding(query);
+    // Use TaskType::Query when searching
+    std::vector<float> query_embedding = generateEmbedding(query, TaskType::Query); // <-- CHANGE HERE
+    normalizeVector(query_embedding);                                               // Normalize query embedding for cosine similarity
 
-    // Base and maximum threshold values
-    const float BASE_THRESHOLD = 1.35f;
-    const float MAX_THRESHOLD = 1.6f;
-    float dynamic_threshold = BASE_THRESHOLD;
-
-    int search_k = k * 4; // more candidates
-    std::vector<long> I(search_k);
-    std::vector<float> D(search_k);
-    index_->search(1, query_embedding.data(), search_k, D.data(), I.data());
+    size_t search_k = k * 5; // Retrieve more to filter by threshold
+    auto knn = index_->searchKnn(query_embedding.data(), search_k);
 
     std::unordered_set<std::string> seen_content;
+    const float BASE_THRESHOLD = 0.75f;
+    float dynamic_threshold = BASE_THRESHOLD;
+    int i = 0;
 
-    for (int i = 0; i < search_k && results.size() < static_cast<size_t>(k); i++)
+    std::vector<std::pair<float, hnswlib::labeltype>> ranked;
+    while (!knn.empty())
     {
-      if (!memory_data_.count(I[i]))
-      {
-        continue;
-      }
+      ranked.push_back(knn.top());
+      knn.pop();
+    }
+    std::reverse(ranked.begin(), ranked.end());
 
-      const auto &entry = memory_data_[I[i]];
-      bool content_seen = !seen_content.insert(entry.content).second;
+    for (const auto &item : ranked)
+    {
+      // Stop once we have enough results
+      if (results.size() >= (size_t)k)
+        break;
 
-      if (D[i] <= dynamic_threshold && !content_seen)
+      float dist = item.first;
+
+      // Check if the result is within our new, more permissive threshold
+      if (dist <= dynamic_threshold)
       {
-        results.push_back(entry);
-      }
-      // Relax threshold if we're not getting enough unique results
-      else if (i > k / 2 && results.size() < k / 2)
-      {
-        dynamic_threshold = std::min(MAX_THRESHOLD, dynamic_threshold * 1.1f);
+        auto doc_id = item.second;
+        if (memory_data_.count(doc_id))
+        {
+          const auto &entry = memory_data_[doc_id];
+          // Add the result if we haven't seen this exact content before
+          if (seen_content.insert(entry.content).second)
+          {
+            results.push_back(entry);
+          }
+        }
       }
     }
 
-    // Debug output
     std::cout << "Query: '" << query << "' Final threshold: " << dynamic_threshold
               << " Results found: " << results.size() << "/" << k << "\n";
-    if (!results.empty())
+    if (!ranked.empty())
     {
-      std::cout << "Best match distance: " << D[0] << "\n";
+      std::cout << "Best match cosine distance: " << ranked[0].first << "\n";
     }
   }
   catch (const std::runtime_error &e)
@@ -196,10 +240,11 @@ std::vector<MemoryEntry> MemoryManager::getLastN(int n)
 
 void MemoryManager::saveToDisk()
 {
-  std::string faiss_index_path = "memory_index.faiss";
+  std::string hnsw_index_path = "memory_index.hnsw";
   std::string text_file_path = "memory_data.json";
 
-  faiss::write_index(index_, faiss_index_path.c_str());
+  // Save HNSW index
+  index_->saveIndex(hnsw_index_path);
 
   try
   {
@@ -222,43 +267,21 @@ void MemoryManager::saveToDisk()
 
 void MemoryManager::loadFromDisk()
 {
-  std::string faiss_index_path = "memory_index.faiss";
+  std::string hnsw_index_path = "memory_index.hnsw";
   std::string text_file_path = "memory_data.json";
 
-  std::ifstream faiss_file(faiss_index_path.c_str(), std::ios::binary);
-  if (!faiss_file.is_open())
+  if (std::filesystem::exists(hnsw_index_path))
   {
-    std::cerr << "FAISS index file not found. Creating a new one." << std::endl;
     delete index_;
-    index_ = new faiss::IndexFlatL2(dimension_);
+    index_ = new hnswlib::HierarchicalNSW<float>(space_, hnsw_index_path);
+    std::cout << "Loaded HNSW index with "
+              << index_->cur_element_count << " vectors." << std::endl;
   }
   else
   {
-    try
-    {
-      faiss::Index *loaded_index = faiss::read_index(faiss_index_path.c_str());
-      faiss::IndexFlatL2 *flat_index = dynamic_cast<faiss::IndexFlatL2 *>(loaded_index);
-
-      if (flat_index)
-      {
-        delete index_;
-        index_ = flat_index;
-        std::cout << "Loaded Faiss index with " << index_->ntotal << " vectors." << std::endl;
-      }
-      else
-      {
-        std::cerr << "Error: Loaded Faiss index is not of type IndexFlatL2. Creating a new one." << std::endl;
-        delete loaded_index;
-        delete index_;
-        index_ = new faiss::IndexFlatL2(dimension_);
-      }
-    }
-    catch (const std::exception &e)
-    {
-      std::cerr << "Failed to load Faiss index. Error: " << e.what() << ". Creating a new one." << std::endl;
-      delete index_;
-      index_ = new faiss::IndexFlatL2(dimension_);
-    }
+    std::cerr << "HNSW index file not found. Creating a new one." << std::endl;
+    delete index_;
+    index_ = new hnswlib::HierarchicalNSW<float>(space_, max_elements_, 16, 200);
   }
 
   std::ifstream in(text_file_path);

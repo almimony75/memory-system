@@ -5,7 +5,7 @@
 
 using json = nlohmann::json;
 
-const std::string MODEL_PATH = "./nomic-embed-text-v2-moe.Q6_K.gguf";
+const std::string MODEL_PATH = "./nomic-embed-text-v2-moe.f32.gguf";
 
 // --------- Auth Middleware -----------
 struct AuthMiddleware
